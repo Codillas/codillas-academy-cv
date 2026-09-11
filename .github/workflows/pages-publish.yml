@@ -1,0 +1,88 @@
+name: Publish Pages
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish static site
+    if: >-
+      github.repository == 'Codillas/codillas-academy-cv' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on:
+      group: public-publisher-ci
+      labels: [site-dedicatednodes, os-linux, arch-x64]
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out exact site revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v6
+        with:
+          enablement: false
+      - name: Prepare bounded static site
+        id: site
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYTHON'
+          import os
+          from pathlib import Path
+          import shutil
+          import stat
+          import subprocess
+          import tempfile
+
+          tracked = subprocess.check_output(["git", "ls-files", "-z"]).split(b"\0")
+          paths = [Path(os.fsdecode(path)) for path in tracked if path]
+          paths = [path for path in paths if path.parts[0] != ".github"]
+          if not paths or len(paths) > 2048:
+              raise SystemExit("Pages requires between 1 and 2048 static files")
+          total = 0
+          for path in paths:
+              info = path.lstat()
+              if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                  raise SystemExit(f"Pages requires regular files without links: {path}")
+              total += info.st_size
+          if total > 64 * 1024 * 1024:
+              raise SystemExit("Pages static content exceeds the 64 MiB limit")
+          site = Path(tempfile.mkdtemp(prefix="github-pages.", dir=os.environ["RUNNER_TEMP"]))
+          for path in paths:
+              target = site / path
+              target.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copyfile(path, target)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"path={site}\n")
+          print(f"Prepared {len(paths)} static files ({total} bytes)")
+          PYTHON
+      # Pages requires this native artifact transport, retained for one day only.
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: ${{ steps.site.outputs.path }}
+          include-hidden-files: true
+          retention-days: 1
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
+      - name: Remove temporary Pages files
+        if: ${{ always() && steps.site.outputs.path != '' }}
+        env:
+          STAGED_SITE: ${{ steps.site.outputs.path }}
+        run: rm -rf -- "$STAGED_SITE" "$RUNNER_TEMP/artifact.tar"
