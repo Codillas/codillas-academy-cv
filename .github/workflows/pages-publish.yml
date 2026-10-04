@@ -20,8 +20,8 @@ jobs:
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on:
-      group: public-publisher-ci
-      labels: [site-dedicatednodes, os-linux, arch-x64]
+      group: gha-public-publisher-ci
+      labels: [site-gha, os-linux, arch-x64]
     timeout-minutes: 15
     environment:
       name: github-pages

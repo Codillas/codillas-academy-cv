@@ -1,5 +1,5 @@
 self-hosted-runner:
   labels:
-    - site-dedicatednodes
+    - site-gha
     - os-linux
     - arch-x64
